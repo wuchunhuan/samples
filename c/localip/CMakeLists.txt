@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 2.8)
+set(CMAKE_VERBOSE_MAKEFILE ON)
+include_directories(/usr/local/include)
+add_compile_options(-g -Wall -fpermissive)
+add_executable(localip_demo localip.c)

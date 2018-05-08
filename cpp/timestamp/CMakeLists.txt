@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 2.8)
+set(CMAKE_VERBOSE_MAKEFILE ON)
+include_directories(/usr/local/include)
+add_compile_options(-g -Wall -fpermissive -std=c++11)
+add_executable(timestamp_demo timestamp.cpp main.cpp)

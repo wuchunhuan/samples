@@ -1,2 +1,2 @@
-# samples
+# Samples
 Sample codes and snippets
