@@ -8,13 +8,24 @@
 
 //Hash map based memory cache with features as bellow:
 //1.Support cache item timeout both globally and individually
-//2.Support washing out item by LRU or FIFO strategy
+//2.Support washing out item by LRU or FIFO strategy or no washing out strategy at all
 //3.Arbitrary key value type supported
 //Note: Lock mechanism is needed in multi-threaded environment
 
+enum err_code {
+    SUCCESS = 0,
+    ERR_STRATEGY_TYPE = -1,
+    ERR_WASHOUT_REMOVE = -2,
+    ERR_WASHOUT_NEWNODE = -3,
+    ERR_ITEM_NOTFOUND = -4,
+    ERR_ITEM_EXPIRED = -5,
+    ERR_CACHE_FULL = -6
+};
+
 enum strategy {
     LRU = 0,
-    FIFO = 1
+    FIFO = 1,
+    NO_WASHOUT = 2
 };
 
 template<class Key, class Val>
@@ -52,28 +63,27 @@ private:
     };
 
 private:
-    uint32_t 		m_ItemLifespan;
-    uint32_t        m_MaxItemNum;
-    strategy        m_Strategy;
-    bool 			m_Init;
-    //boss::CHashMap	m_oCache;
+    uint32_t m_ItemLifespan;
+    uint32_t m_MaxItemNum;
+    strategy m_Strategy;
+    bool m_Init;
     std::unordered_map<Key, CacheValue> m_HashMap;
 #ifdef ENABLE_RM_TIMEOUT
     std::map<time_t, Key, std::less<time_t> > m_TimeOutSorter;
 #endif
-    WashOutNode *   m_WashoutHead;
-    WashOutNode *   m_WashoutTail;
+    WashOutNode * m_WashoutHead;
+    WashOutNode * m_WashoutTail;
 };
 
 template<class Key, class Val>
 int Cache<Key, Val>::Init(uint32_t maxItemNum, strategy stra, uint32_t lifespan) {
     if(m_Init) {
-        return 0;
+        return SUCCESS;
     }
 
-    if (stra < LRU || stra > FIFO) {
+    if (stra < LRU || stra > NO_WASHOUT) {
         std::cout << "Strategy error!" << std::endl;
-        return -1;
+        return ERR_STRATEGY_TYPE;
     }
 
     m_MaxItemNum  = maxItemNum;
@@ -90,13 +100,16 @@ int Cache<Key, Val>::Init(uint32_t maxItemNum, strategy stra, uint32_t lifespan)
     std::cout << "Init CAo_Cache ok! dwCacheNum " << maxItemNum << ", dwCacheTime "
               << lifespan << ", strategy: " << stra << std::endl;
 
-    return 0;
+    return SUCCESS;
 }
 
 template<class Key, class Val>
 int Cache<Key, Val>::Insert(const Key &key, Val &val, uint32_t lifespan) {
     //当缓存大于最大值时，tail淘汰
     if (m_HashMap.size() >= m_MaxItemNum) {
+        if (m_Strategy == NO_WASHOUT) {
+            return ERR_CACHE_FULL;
+        }
         std::cout << "cache size: " << m_HashMap.size() << "max: " << m_MaxItemNum << " start to wash out." << std::endl;
         WashOutNode * tmp = NULL;
         if (m_Strategy == LRU) {
@@ -130,39 +143,42 @@ int Cache<Key, Val>::Insert(const Key &key, Val &val, uint32_t lifespan) {
                 }
             }
         } else {
-            return -1;
+            return ERR_WASHOUT_REMOVE;
         }
 
     }
 
     //更新淘汰链
-    WashOutNode * pWashNode = new WashOutNode;
-    if(pWashNode == NULL) {
-        return -1;
-    }
-    pWashNode->key = key;
-    pWashNode->pre = NULL;
-    pWashNode->next = NULL;
-
-    if (m_Strategy == LRU) {
-        if(m_WashoutHead == NULL) {
-            m_WashoutHead = pWashNode;
-            m_WashoutTail = pWashNode;
-        } else {
-            //head插入
-            m_WashoutHead->pre = pWashNode;
-            pWashNode->next = m_WashoutHead;
-            m_WashoutHead = pWashNode;
-
+    WashOutNode * pWashNode = NULL;
+    if (m_Strategy == LRU || m_Strategy == FIFO) {
+        pWashNode = new WashOutNode;
+        if(pWashNode == NULL) {
+            return ERR_WASHOUT_NEWNODE;
         }
-    } else if (m_Strategy == FIFO){
-        if (m_WashoutTail == NULL) {
-            m_WashoutHead = pWashNode;
-            m_WashoutTail = pWashNode;
-        } else {
-            m_WashoutTail->next = pWashNode;
-            pWashNode->pre = m_WashoutTail;
-            m_WashoutTail = pWashNode;
+        pWashNode->key = key;
+        pWashNode->pre = NULL;
+        pWashNode->next = NULL;
+
+        if (m_Strategy == LRU) {
+            if(m_WashoutHead == NULL) {
+                m_WashoutHead = pWashNode;
+                m_WashoutTail = pWashNode;
+            } else {
+                //head插入
+                m_WashoutHead->pre = pWashNode;
+                pWashNode->next = m_WashoutHead;
+                m_WashoutHead = pWashNode;
+
+            }
+        } else if (m_Strategy == FIFO){
+            if (m_WashoutTail == NULL) {
+                m_WashoutHead = pWashNode;
+                m_WashoutTail = pWashNode;
+            } else {
+                m_WashoutTail->next = pWashNode;
+                pWashNode->pre = m_WashoutTail;
+                m_WashoutTail = pWashNode;
+            }
         }
     }
 
@@ -189,7 +205,7 @@ int Cache<Key, Val>::Insert(const Key &key, Val &val, uint32_t lifespan) {
     //std::cout << "Insert key: " << Key << " now: " << oCacheValue.m_UpdateTime << std::endl;
     //std::cout << "cache size: " << m_HashMap.size() << std::endl;
 
-    return 0;
+    return SUCCESS;
 }
 
 template<class Key, class Val>
@@ -199,7 +215,7 @@ int Cache<Key, Val>::Find(const Key &key, Val &val) {
 
     if (itFind == m_HashMap.end()) {
         std::cout << "not find in cache!" << std::endl;
-        return -1;
+        return ERR_ITEM_NOTFOUND;
     }
 
     time_t tNow = time(NULL);
@@ -241,7 +257,7 @@ int Cache<Key, Val>::Find(const Key &key, Val &val) {
         //从cache中删除
         m_HashMap.erase(itFind);
         //std::cout << "timeout, delete key: " << itFind->first << std::endl;
-        return -1;
+        return ERR_ITEM_EXPIRED;
     }
 
     val = itFind->second.m_val;
@@ -267,7 +283,7 @@ int Cache<Key, Val>::Find(const Key &key, Val &val) {
         }
     }
 
-    return 0;
+    return SUCCESS;
 }
 
 template<class Key, class Val>
@@ -276,7 +292,7 @@ int Cache<Key, Val>::Delete(const Key &key) {
 
     if (itFind == m_HashMap.end()) {
         std::cout << "not find in cache!" << std::endl;
-        return -1;
+        return ERR_ITEM_NOTFOUND;
     }
     WashOutNode * tmp = itFind->second.m_WashoutNode;
     //超时更新淘汰链
@@ -299,7 +315,7 @@ int Cache<Key, Val>::Delete(const Key &key) {
     //从cache中删除
     m_HashMap.erase(itFind);
 
-    return 0;
+    return SUCCESS;
 }
 
 #ifdef ENABLE_RM_TIMEOUT
@@ -314,7 +330,7 @@ int Cache<Key, Val>::RmTimeoutItem() {
     }
 
     m_TimeOutSorter.erase(m_TimeOutSorter.begin(), iter);
-    return 0;
+    return SUCCESS;
 }
 
 #endif
